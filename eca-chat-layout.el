@@ -45,7 +45,7 @@
             (setq-local default-directory dir))
           (setq-local eca-chat--id
                       (buffer-local-value
-                       'eca-chat--id chat-buffer))))
+                       'eca-chat--id chat-buffer)))
         buf))))
 
 (defun eca-chat-layout--get-server-info-buffer (chat-buffer)
@@ -89,8 +89,7 @@ The chat window takes the space of the old side window."
   ;; Display the chat in the side window using existing logic.
   (eca-chat--display-buffer chat-buffer)
   (let* ((chat-win (get-buffer-window chat-buffer))
-         (side eca-chat-window-side)
-         (chat-name (buffer-name chat-buffer)))
+         (side eca-chat-window-side))
     (unless (window-live-p chat-win)
       (user-error "Failed to display chat window"))
     (select-window chat-win)
@@ -115,7 +114,7 @@ The chat window takes the space of the old side window."
             (setq-local header-line-format nil)
             (setq-local mode-line-format nil))
           ;; Focus the prompt window (user input).
-          (select-window prompt-win)))))))
+          (select-window prompt-win))))))
 
 ;; Layout teardown
 
