@@ -2326,14 +2326,16 @@ Above the prompt field the kill is blocked like other deletions."
       (goto-char prompt-start)
       (string-trim (buffer-substring (point) (point-max))))))
 
-(defun eca-chat--extract-contexts-from-prompt ()
+(defun eca-chat--extract-contexts-from-prompt (&optional buffer)
   "Extract contexts from prompt text properties.
-Resteps a list of context plists found in the prompt field, plus
+Returns a list of context plists found in the prompt field, plus
 raw @path tokens that resolve to existing files or directories
 under a workspace root (e.g. after drilling into a directory
 without finalizing it)."
-  (when-let ((prompt-start (eca-chat--prompt-field-start-point)))
-    (let ((contexts '())
+  (with-current-buffer (or buffer (current-buffer))
+    (let ((prompt-start (or (eca-chat--prompt-field-start-point)
+                            (point-min)))
+          (contexts '())
           (pos prompt-start)
           (end (point-max)))
       (while (< pos end)
@@ -2344,11 +2346,12 @@ without finalizing it)."
       (append (nreverse contexts)
               (eca-chat--raw-prompt-contexts)))))
 
-(defun eca-chat--send-prompt (session prompt)
+(defun eca-chat--send-prompt (session prompt &optional prompt-buffer)
   "Send PROMPT to server for SESSION."
   (when eca-chat--closed
     (user-error (eca-error "This chat is closed")))
-  (let* ((prompt-contexts (eca-chat--extract-contexts-from-prompt))
+  (let* ((prompt-contexts (eca-chat--extract-contexts-from-prompt
+                           prompt-buffer))
          (refined-contexts (->> (append eca-chat--context prompt-contexts)
                                 (-map #'eca-chat--refine-context)
                                 (-keep #'eca-chat--materialize-context))))

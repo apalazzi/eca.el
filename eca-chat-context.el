@@ -534,14 +534,16 @@ the session workspace roots (including ./ and ../ tokens)."
                  (when (f-exists? expanded) expanded)))
              (eca--session-workspace-folders (eca-session))))))
 
-(defun eca-chat--raw-prompt-contexts ()
+(defun eca-chat--raw-prompt-contexts (&optional buffer)
   "Return contexts for raw @path tokens typed in the prompt field.
 Only workspace-relative tokens are considered: absolute, ~ and
 dot prefixed mentions are already parsed by the server from the
 message text, and tokens already linked to a context chip are
 skipped."
-  (when-let ((prompt-start (eca-chat--prompt-field-start-point)))
-    (let ((contexts '())
+  (with-current-buffer (or buffer (current-buffer))
+    (let ((prompt-start (or (eca-chat--prompt-field-start-point)
+                            (point-min)))
+          (contexts '())
           (regexp (concat "\\(?:^\\|[^[:alnum:]]\\)"
                           (regexp-quote eca-chat-context-prefix)
                           "\\([^[:space:]]+\\)")))
@@ -549,11 +551,13 @@ skipped."
         (goto-char prompt-start)
         (while (re-search-forward regexp nil t)
           (let ((token (match-string-no-properties 1)))
-            (unless (or (get-text-property (match-beginning 1) 'eca-chat-context-item)
+            (unless (or (get-text-property (match-beginning 1)
+                                           'eca-chat-context-item)
                         (file-name-absolute-p token)
                         (string-prefix-p "." token))
               (when-let ((path (eca-chat--resolve-path-token token)))
-                (let ((context (list :type (if (f-dir? path) "directory" "file")
+                (let ((context (list :type (if (f-dir? path)
+                                               "directory" "file")
                                      :path path)))
                   (unless (member context contexts)
                     (push context contexts))))))))
