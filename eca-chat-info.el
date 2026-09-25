@@ -152,9 +152,9 @@ MCP server status, and the skills token footprint.
     (user-error "Target chat buffer no longer exists"))
   (let* ((info-buffer (current-buffer))
          (chat eca-chat-info--chat-buffer)
-         (session (eca-session chat)))
+         (session (with-current-buffer chat (eca-session))))
     (with-current-buffer chat
-      (let ((folders (eca--session-workspace-folders session))
+      (let* ((folders (eca--session-workspace-folders session))
             (tokens eca-chat--session-tokens)
             (limit eca-chat--session-limit-context)
             (bar (eca-chat--context-bar))
@@ -240,7 +240,9 @@ otherwise it targets the session's last used chat."
                                  'eca-chat-workspace-info-mode)
                  eca-chat-info--chat-buffer
                  (buffer-live-p eca-chat-info--chat-buffer))
-        (let ((buf-session (eca-session eca-chat-info--chat-buffer)))
+        (let ((buf-session (with-current-buffer
+                               eca-chat-info--chat-buffer
+                             (eca-session))))
           (when (eq buf-session session)
             (cond
              ((derived-mode-p 'eca-chat-server-info-mode)

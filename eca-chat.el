@@ -25,6 +25,13 @@
 (require 'eca-chat-context)
 (require 'eca-chat-image)
 
+;; Defined in eca-chat-layout.el, which requires eca-chat; declared
+;; here to satisfy the byte-compiler for the wiring below.
+(declare-function eca-chat--layout-setup "eca-chat-layout"
+                  (session chat-buffer))
+(declare-function eca-chat--layout-teardown "eca-chat-layout"
+                  (chat-buffer))
+
 (require 'evil nil t)
 
 ;; Variables
@@ -2333,8 +2340,8 @@ raw @path tokens that resolve to existing files or directories
 under a workspace root (e.g. after drilling into a directory
 without finalizing it)."
   (with-current-buffer (or buffer (current-buffer))
-    (let ((prompt-start (or (eca-chat--prompt-field-start-point)
-                            (point-min)))
+    (let* ((prompt-start (or (eca-chat--prompt-field-start-point)
+                             (point-min)))
           (contexts '())
           (pos prompt-start)
           (end (point-max)))
@@ -5477,8 +5484,15 @@ When ACTIVE is non-nil, show the question prefix; otherwise restore normal."
       (eca-chat--pop-window))
     (unless (eca--session-last-chat-buffer session)
       (setf (eca--session-last-chat-buffer session) (current-buffer)))
-    ;; Build the four-zone layout (server-info / chat / prompt / ws-info).
-    (eca-chat--layout-setup session (current-buffer))))
+    ;; Build the four-zone layout (server-info / chat / prompt /
+    ;; ws-info).  A layout failure must not break opening the chat,
+    ;; and this runs inside a process filter: log and fall back to
+    ;; the plain single-window layout instead of signaling.
+    (condition-case err
+        (eca-chat--layout-setup session (current-buffer))
+      (error
+       (eca-warn "Four-zone chat layout failed: %s"
+                 (error-message-string err)))))
   (eca-chat--track-cursor))
 
 (defun eca-chat-exit (session)

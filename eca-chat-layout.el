@@ -34,7 +34,8 @@
     (if (get-buffer name)
         (get-buffer name)
       (let ((buf (generate-new-buffer name))
-            (session (eca-session chat-buffer)))
+            (session (with-current-buffer chat-buffer
+                       (eca-session))))
         (with-current-buffer buf
           (eca-chat-prompt-mode)
           (setq eca-chat-prompt--target-buffer chat-buffer)
@@ -76,8 +77,8 @@
 
 ;; Layout setup
 
-(defun eca-chat--layout-setup (session chat-buffer)
-  "Build the four stacked windows for CHAT-BUFFER in SESSION.
+(defun eca-chat--layout-setup (_session chat-buffer)
+  "Build the four stacked windows around CHAT-BUFFER.
 Top to bottom: server-info, chat, prompt, workspace-info.
 The chat window takes the space of the old side window."
   (unless (memq eca-chat-window-side '(left right))
@@ -88,17 +89,35 @@ The chat window takes the space of the old side window."
                 (current-window-configuration)))
   ;; Display the chat in the side window using existing logic.
   (eca-chat--display-buffer chat-buffer)
-  (let* ((chat-win (get-buffer-window chat-buffer))
-         (side eca-chat-window-side))
+  (let ((chat-win (get-buffer-window chat-buffer)))
     (unless (window-live-p chat-win)
       (user-error "Failed to display chat window"))
     (select-window chat-win)
-    ;; Split below: prompt window.
-    (let ((prompt-win (split-window-below chat-win 6)))
-      ;; Split the new window below: workspace-info.
-      (let ((ws-win (split-window-below prompt-win 5)))
-        ;; Split chat-win above: server-info.
-        (let ((info-win (split-window-above chat-win 3)))
+    ;; `split-window-below'/`split-window-above' act on the
+    ;; selected window; SIZE is the height the original window
+    ;; keeps, the new one gets the rest.  Bind
+    ;; `window-min-height' so the small info windows can exist.
+    (let* ((window-min-height 1)
+           (h (window-total-height chat-win))
+           ;; Split 11 lines below the chat window; that new
+           ;; window becomes the prompt window...
+           (prompt-win (split-window-below (max 1 (- h 11))))
+           ;; ...split again below: prompt keeps 6 lines, the
+           ;; new lower window (5) is workspace-info.
+           (ws-win (progn
+                     (select-window prompt-win)
+                     (split-window-below 6)))
+           ;; Finally split 3 lines above the chat window for
+           ;; server-info.  (`split-window-above' does not exist;
+           ;; the generic `split-window' with SIDE 'above keeps
+           ;; SIZE lines in the original window.)
+           (info-win (progn
+                       (select-window chat-win)
+                       (split-window
+                        chat-win
+                        (max 1 (- (window-total-height chat-win)
+                                  3))
+                        'above))))
           ;; Set buffers in the three new windows.
           (set-window-buffer info-win
                              (eca-chat-layout--get-server-info-buffer
@@ -114,7 +133,7 @@ The chat window takes the space of the old side window."
             (setq-local header-line-format nil)
             (setq-local mode-line-format nil))
           ;; Focus the prompt window (user input).
-          (select-window prompt-win))))))
+          (select-window prompt-win))))
 
 ;; Layout teardown
 

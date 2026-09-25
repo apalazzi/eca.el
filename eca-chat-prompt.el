@@ -129,8 +129,8 @@ buffer content as a prompt to that chat;
                 (setq-local default-directory dir))
               (setq-local eca-chat--id
                           (buffer-local-value
-                           'eca-chat--id target))))
-            (pop-to-buffer buffer))))))
+                           'eca-chat--id target)))
+            (pop-to-buffer buffer)))))))
 
 (defun eca-chat-prompt-send ()
   "Send the prompt buffer content to the target chat.
