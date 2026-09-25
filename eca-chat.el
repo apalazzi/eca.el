@@ -5476,11 +5476,18 @@ When ACTIVE is non-nil, show the question prefix; otherwise restore normal."
         (eca-chat--select-window)
       (eca-chat--pop-window))
     (unless (eca--session-last-chat-buffer session)
-      (setf (eca--session-last-chat-buffer session) (current-buffer))))
+      (setf (eca--session-last-chat-buffer session) (current-buffer)))
+    ;; Build the four-zone layout (server-info / chat / prompt / ws-info).
+    (eca-chat--layout-setup session (current-buffer))))
   (eca-chat--track-cursor))
 
 (defun eca-chat-exit (session)
   "Exit the ECA chat for SESSION."
+  ;; Tear down the four-zone layout before per-buffer cleanup.
+  (dolist (title+buffer (eca--session-chats session))
+    (let ((chat-buffer (cdr title+buffer)))
+      (when (buffer-live-p chat-buffer)
+        (eca-chat--layout-teardown chat-buffer))))
   ;; Cancel the global repeating idle timer that tracks cursor position.
   (when (timerp eca-chat--cursor-context-timer)
     (cancel-timer eca-chat--cursor-context-timer)
