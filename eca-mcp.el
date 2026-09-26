@@ -310,7 +310,7 @@ nil when the form is closed.")
             (setq params (plist-put params :url url))
             (when headers (setq params (plist-put params :headers headers)))))
         (when (string= scope "workspace")
-          (when-let ((folder (car (eca--session-workspace-folders session))))
+          (when-let* ((folder (car (eca--session-workspace-folders session))))
             (setq params (plist-put params :workspaceUri (eca--path-to-uri folder)))))
         (eca-api-request-async
          session

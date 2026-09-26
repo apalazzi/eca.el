@@ -55,10 +55,20 @@
                      (buffer-name chat-buffer))))
     (if (get-buffer name)
         (get-buffer name)
-      (let ((buf (generate-new-buffer name)))
+      (let ((buf (generate-new-buffer name))
+            (session (with-current-buffer chat-buffer
+                       (eca-session))))
         (with-current-buffer buf
           (eca-chat-server-info-mode)
           (setq eca-chat-info--chat-buffer chat-buffer)
+          (setq-local eca--session-id-cache
+                      (eca--session-id session))
+          (when-let* ((dir (car (eca--session-workspace-folders
+                                 session))))
+            (setq-local default-directory dir))
+          (setq-local eca-chat--id
+                      (buffer-local-value
+                       'eca-chat--id chat-buffer))
           (eca-chat--render-server-info))
         buf))))
 
@@ -68,14 +78,36 @@
                      (buffer-name chat-buffer))))
     (if (get-buffer name)
         (get-buffer name)
-      (let ((buf (generate-new-buffer name)))
+      (let ((buf (generate-new-buffer name))
+            (session (with-current-buffer chat-buffer
+                       (eca-session))))
         (with-current-buffer buf
           (eca-chat-workspace-info-mode)
           (setq eca-chat-info--chat-buffer chat-buffer)
+          (setq-local eca--session-id-cache
+                      (eca--session-id session))
+          (when-let* ((dir (car (eca--session-workspace-folders
+                                 session))))
+            (setq-local default-directory dir))
           (eca-chat--render-workspace-info))
         buf))))
 
 ;; Layout setup
+
+(defun eca-chat-layout--display-splittable (chat-buffer)
+  "Display CHAT-BUFFER in a window that can be split.
+Side windows cannot be split, so any side window already showing
+CHAT-BUFFER or another chat buffer is deleted first, and display is
+forced to use a regular directional window (`display-buffer-in-direction')
+instead of a dedicated side window."
+  (let ((eca-chat-use-side-window nil))
+    (dolist (w (window-list nil 'no-minibuffer))
+      (when-let* ((buf (and (window-parameter w 'window-side)
+                            (window-buffer w))))
+        (when (or (eq buf chat-buffer)
+                  (buffer-local-value 'eca-chat--id buf))
+          (delete-window w))))
+    (eca-chat--display-buffer chat-buffer)))
 
 (defun eca-chat--layout-setup (_session chat-buffer)
   "Build the four stacked windows around CHAT-BUFFER.
@@ -87,8 +119,9 @@ The chat window takes the space of the old side window."
   (eca-chat--with-current-buffer chat-buffer
     (setq-local eca-chat--layout-saved-cwc
                 (current-window-configuration)))
-  ;; Display the chat in the side window using existing logic.
-  (eca-chat--display-buffer chat-buffer)
+  ;; Display the chat in a splittable (non side-window) window: side
+  ;; windows cannot be split, which would break the four-zone layout.
+  (eca-chat-layout--display-splittable chat-buffer)
   (let ((chat-win (get-buffer-window chat-buffer)))
     (unless (window-live-p chat-win)
       (user-error "Failed to display chat window"))

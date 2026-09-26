@@ -209,7 +209,7 @@ https://github.com/emacs-lsp/lsp-mode/issues/4746#issuecomment-2957183423"
        (unwind-protect
            (condition-case err
                (progn
-                 (when-let ((error-data (plist-get status :error)))
+                 (when-let* ((error-data (plist-get status :error)))
                    (error "%s" error-data))
                  (let ((coding-system-for-write 'binary)
                        (buffer-file-coding-system 'binary))
@@ -303,13 +303,13 @@ are skipped for `eca-process--releases-failure-cooldown' seconds."
 
 (defun eca-process--get-latest-server-version ()
   "Return the latest server version."
-  (when-let ((releases (eca-process--fetch-releases)))
+  (when-let* ((releases (eca-process--fetch-releases)))
     (plist-get (elt releases 0) :tag_name)))
 
 (defun eca-process--get-property (property &optional version)
   "Retrieve PROPERTY for server binary VERSION.
 When VERSION is nil, returns PROPERTY from the latest release."
-  (when-let ((releases (eca-process--fetch-releases)))
+  (when-let* ((releases (eca-process--fetch-releases)))
     (let ((props (if version
                      (seq-find (lambda (ver)
                                  (string-equal
@@ -685,7 +685,7 @@ Call HANDLE-MSG for new msgs processed."
         (with-current-buffer stderr-buffer
           (rename-buffer (concat (buffer-name) ":closed") t)
           (setq-local mode-line-format '("*Closed session*"))
-          (when-let ((win (get-buffer-window (current-buffer))))
+          (when-let* ((win (get-buffer-window (current-buffer))))
             (quit-window nil win))
           ;; Keep only the most recently closed stderr buffer; kill older ones.
           ;; Only kill :closed buffers — never non-closed ones which belong
@@ -698,7 +698,7 @@ Call HANDLE-MSG for new msgs processed."
 
 (defun eca-process-show-stderr (session)
   "Open the eca process stderr buffer for SESSION."
-  (if-let ((buf (get-buffer (eca-process--stderr-buffer-name session))))
+  (if-let* ((buf (get-buffer (eca-process--stderr-buffer-name session))))
       (if (window-live-p (get-buffer-window buf))
           (select-window (get-buffer-window buf))
         (display-buffer buf))

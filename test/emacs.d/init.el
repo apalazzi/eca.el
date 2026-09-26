@@ -27,6 +27,11 @@
   (setq eca-chat-use-side-window t)
   (setq eca-chat-window-side 'right)
   (setq eca-chat-hide-markdown-markup nil)
+  ;; DEBUG scrolling sluggishness: plain-text chat rendering.
+  (setq eca-chat-enable-markdown-formatting nil)
+  ;; Chat window read-only: interactive edits outside the prompt
+  ;; area are refused.
+  (setq eca-chat-read-only-buffer t)
   )
 ;; (setq eca-extra-args '("--log-level" "debug"))
 ;; (setq eca-extra-args '("--verbose"))

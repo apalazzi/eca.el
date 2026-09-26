@@ -23,7 +23,7 @@
 
 (defun eca-config--global-path ()
   "Return the path to the global ECA config file."
-  (if-let (xdg (getenv "XDG_CONFIG_HOME"))
+  (if-let* ((xdg (getenv "XDG_CONFIG_HOME")))
       (f-join xdg "eca" "config.json")
     (f-join (f-expand "~") ".config" "eca" "config.json")))
 

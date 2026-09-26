@@ -28,18 +28,61 @@
 
 ;; Internal
 
+(defun eca-chat-info--row-map (command)
+  "Return a mouse-1 keymap invoking COMMAND on the whole row.
+Mirrors the chat header-line approach in
+`eca-chat--header-line-string' (the original selection method):
+the command is bound directly, without a wrapper.  The selection
+commands resolve the session themselves and route to the session's
+active chat buffer, so they work from any buffer."
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-1] command)
+    map))
+
+(defun eca-chat-info--overlay-clickable-rows (maps)
+  "Cover each info row with a clickable overlay.
+MAPS is an alist mapping row labels (strings) to commands.  Text
+property keymaps can lose mouse clicks to global `down-mouse-1'
+handlers (`mouse-drag-region', evil's mouse setup); overlay
+keymaps sit at the top of the lookup chain and binding
+`down-mouse-1' as well as `mouse-1' makes the row fire on press
+regardless.  Overlays are wiped by the next render's
+`erase-buffer'."
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (let* ((label (car (split-string (buffer-substring-no-properties
+                                        (line-beginning-position)
+                                        (line-end-position))
+                                       ":" t)))
+             (command (and label (cdr (assoc label maps)))))
+        (when command
+          (let ((ov (make-overlay (line-beginning-position)
+                                  (line-end-position))))
+            (overlay-put ov 'eca-chat-info-row t)
+            (overlay-put ov 'pointer 'hand)
+            (overlay-put ov 'mouse-face 'highlight)
+            (let ((map (make-sparse-keymap)))
+              (define-key map [mouse-1] command)
+              (define-key map [down-mouse-1] command)
+              (overlay-put ov 'keymap map)))))
+      (forward-line 1))))
+
 (defun eca-chat--info-row (label value &optional keymap)
   "Return a formatted \"LABEL: VALUE\" string.
-When KEYMAP is non-nil the value is clickable (mouse-1)."
+When KEYMAP is non-nil the whole row is clickable (mouse-1);
+users naturally click anywhere on the row, not only on the
+value, so the keymap covers label, separator and value."
   (let ((val (or value "-"))
         (face 'eca-chat-option-value-face))
     (if keymap
-        (concat
-         (propertize label 'font-lock-face 'eca-chat-option-key-face)
-         ": "
-         (propertize val 'font-lock-face face
-                     'pointer 'hand
-                     'keymap keymap))
+        (propertize
+         (concat
+          (propertize label 'font-lock-face 'eca-chat-option-key-face)
+          ": "
+          (propertize val 'font-lock-face face))
+         'pointer 'hand
+         'keymap keymap)
       (concat
        (propertize label 'font-lock-face 'eca-chat-option-key-face)
        ": "
@@ -60,49 +103,67 @@ change), the ECA server version, and the trust indicator.
   (setq buffer-read-only t)
   (read-only-mode 1))
 
+(define-key eca-chat-server-info-mode-map (kbd "m")
+  #'eca-chat-select-model)
+(define-key eca-chat-server-info-mode-map (kbd "a")
+  #'eca-chat-select-agent)
+(define-key eca-chat-server-info-mode-map (kbd "v")
+  #'eca-chat-select-variant)
+(define-key eca-chat-server-info-mode-map (kbd "g")
+  #'eca-chat-server-info-refresh)
+(define-key eca-chat-server-info-mode-map (kbd "r")
+  #'eca-chat-server-info-refresh)
+
 (defun eca-chat--render-server-info ()
   "Rebuild the server-info buffer from the target chat state."
   (unless (buffer-live-p eca-chat-info--chat-buffer)
     (user-error "Target chat buffer no longer exists"))
   (let* ((info-buffer (current-buffer))
          (chat eca-chat-info--chat-buffer)
-         (model-keymap (make-sparse-keymap))
-         (agent-keymap (make-sparse-keymap))
-         (variant-keymap (make-sparse-keymap)))
-    (define-key model-keymap (kbd "<mouse-1>") #'eca-chat-select-model)
-    (define-key agent-keymap (kbd "<mouse-1>") #'eca-chat-select-agent)
-    (define-key variant-keymap (kbd "<mouse-1>") #'eca-chat-select-variant)
+         (model-keymap (eca-chat-info--row-map #'eca-chat-select-model))
+         (agent-keymap (eca-chat-info--row-map #'eca-chat-select-agent))
+         (variant-keymap (eca-chat-info--row-map #'eca-chat-select-variant)))
     (with-current-buffer chat
       (let ((model (eca-chat--model))
             (agent (eca-chat--agent))
             (variant (eca-chat--variant))
             (version eca-chat--server-version)
             (trust (eca-chat--trust)))
+        ;; Info buffers are read-only between renders; every
+        ;; erase/insert must inhibit that or it signals
+        ;; "Buffer is read-only", which (when called from a
+        ;; process filter) also aborts handling of the server
+        ;; message that triggered the refresh.
         (with-current-buffer info-buffer
-          (erase-buffer)
-          (insert
-           (eca-chat--info-row "Model" model model-keymap) "\n"
-           (eca-chat--info-row "Agent" agent agent-keymap) "\n"
-           (eca-chat--info-row "Variant" variant variant-keymap) "\n"
-           (eca-chat--info-row "Server" version) "\n"
-           (let* ((graphic? (display-graphic-p))
-                  (face (if trust
-                            'eca-chat-trust-on-face
-                          'eca-chat-trust-off-face))
-                  (symbol (if trust
-                              (if graphic? eca-chat-trust-on-symbol
-                                eca-chat-trust-on-symbol-tty)
-                            (if graphic? eca-chat-trust-off-symbol
-                              eca-chat-trust-off-symbol-tty))))
-             (concat
-              (propertize "Trust"
-                          'font-lock-face 'eca-chat-option-key-face)
-              ": "
-              (propertize symbol 'face face)
-              (propertize (if trust " (on)" " (off)")
-                          'face face)))
-           "\n")
-          (goto-char (point-min)))))))
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert
+             (eca-chat--info-row "Model" model model-keymap) "\n"
+             (eca-chat--info-row "Agent" agent agent-keymap) "\n"
+             (eca-chat--info-row "Variant" variant variant-keymap) "\n"
+             (eca-chat--info-row "Server" version) "\n"
+             (let* ((graphic? (display-graphic-p))
+                    (face (if trust
+                              'eca-chat-trust-on-face
+                            'eca-chat-trust-off-face))
+                    (symbol (if trust
+                                (if graphic? eca-chat-trust-on-symbol
+                                  eca-chat-trust-on-symbol-tty)
+                              (if graphic? eca-chat-trust-off-symbol
+                                eca-chat-trust-off-symbol-tty))))
+               (concat
+                (propertize "Trust"
+                            'font-lock-face 'eca-chat-option-key-face)
+                ": "
+                (propertize symbol 'face face)
+                (propertize (if trust " (on)" " (off)")
+                            'face face)))
+             "\n")
+            (eca-chat-info--overlay-clickable-rows
+             (list (cons "Model" #'eca-chat-select-model)
+                   (cons "Agent" #'eca-chat-select-agent)
+                   (cons "Variant" #'eca-chat-select-variant)))
+            (goto-char (point-min))))))))
 
 (defun eca-chat-server-info-buffer ()
   "Get or create the server-info buffer for the current chat.
@@ -126,6 +187,7 @@ otherwise it targets the session's last used chat."
           (let ((buffer (generate-new-buffer name)))
             (with-current-buffer buffer
               (eca-chat-server-info-mode)
+              (setq-local eca--session-id-cache (eca--session-id session))
               (setq eca-chat-info--chat-buffer target)
               (eca-chat--render-server-info))
             (pop-to-buffer buffer)))))))
@@ -164,35 +226,38 @@ MCP server status, and the skills token footprint.
              (when breakdown
                (plist-get (plist-get breakdown :categories)
                           "Skills"))))
+        ;; Same inhibit as the server-info render: the buffer is
+        ;; read-only between renders.
         (with-current-buffer info-buffer
-          (erase-buffer)
-          ;; Workspace paths
-          (dolist (dir folders)
-            (insert (eca-chat--info-row "Workspace" dir) "\n"))
-          ;; Context usage
-          (insert (eca-chat--info-row
-                   "Context"
-                   (when (and tokens limit)
-                     (format "%s / %s"
-                             (eca-chat--number->friendly-number
-                              tokens)
-                             (eca-chat--number->friendly-number
-                              limit)))))
-          (when bar
-            (insert "\n" bar))
-          (insert "\n")
-          ;; MCP servers
-          (if mcps
-              (let ((summary (eca-chat--mcps-summary session)))
-                (insert (eca-chat--info-row "MCPs" summary) "\n"))
-            (insert (eca-chat--info-row "MCPs" "none") "\n"))
-          ;; Skills footprint
-          (insert (eca-chat--info-row
-                   "Skills tokens"
-                   (when skills-tokens
-                     (eca-chat--number->friendly-number
-                      skills-tokens))))
-          (goto-char (point-min)))))))
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            ;; Workspace paths
+            (dolist (dir folders)
+              (insert (eca-chat--info-row "Workspace" dir) "\n"))
+            ;; Context usage (used / available tokens)
+            (insert (eca-chat--info-row
+                     "Context"
+                     (when (and tokens limit)
+                       (format "%s / %s"
+                               (eca-chat--number->friendly-number
+                                tokens)
+                               (eca-chat--number->friendly-number
+                                limit)))))
+            (when bar
+              (insert "\n" bar))
+            (insert "\n")
+            ;; MCP servers
+            (if mcps
+                (let ((summary (eca-chat--mcps-summary session)))
+                  (insert (eca-chat--info-row "MCPs" summary) "\n"))
+              (insert (eca-chat--info-row "MCPs" "none") "\n"))
+            ;; Skills footprint
+            (insert (eca-chat--info-row
+                     "Skills tokens"
+                     (when skills-tokens
+                       (eca-chat--number->friendly-number
+                        skills-tokens))))
+            (goto-char (point-min))))))))
 
 (defun eca-chat-workspace-info-buffer ()
   "Get or create the workspace-info buffer for the current chat.
@@ -244,11 +309,15 @@ otherwise it targets the session's last used chat."
                                eca-chat-info--chat-buffer
                              (eca-session))))
           (when (eq buf-session session)
+            ;; Demote errors: this hook runs from process filters and
+            ;; a render failure must not abort message processing.
             (cond
              ((derived-mode-p 'eca-chat-server-info-mode)
-              (eca-chat--render-server-info))
+              (with-demoted-errors "eca-chat-info refresh: %S"
+                (eca-chat--render-server-info)))
              ((derived-mode-p 'eca-chat-workspace-info-mode)
-              (eca-chat--render-workspace-info)))))))))
+              (with-demoted-errors "eca-chat-info refresh: %S"
+                (eca-chat--render-workspace-info))))))))))
 
 (add-hook 'eca-chat-session-status-changed-functions
           #'eca-chat-info--refresh)

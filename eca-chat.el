@@ -34,6 +34,14 @@
 
 (require 'evil nil t)
 
+;; Evil is an optional runtime dependency (see the require above);
+;; these declarations reference the functions used below so the
+;; byte/nat compile passes without evil installed.
+(declare-function evil-delete "evil-ops"
+                  (&optional BEG END COUNT))
+(declare-function evil-change-line "evil-ops"
+                  (&optional COUNT))
+
 ;; Variables
 
 (eval-and-compile
@@ -147,6 +155,17 @@ that window is already focused."
 Only the prompt block at the bottom stays editable, which prevents
 accidental edits to previous messages and assistant output.  Set
 to nil to keep the whole chat buffer writable."
+  :type 'boolean
+  :group 'eca)
+
+(defcustom eca-chat-read-only-buffer nil
+  "When non-nil, interactive edits outside the prompt area error.
+Unlike `eca-chat-read-only-history' (a soft text-property lock),
+this installs a hard `before-change-functions' guard: typing,
+yanking, evil edits and kills that touch the chat content area
+are refused with an error.  Programmatic edits that bind
+`inhibit-read-only' (streaming renders, prompt management) pass
+through, and composing inside the prompt area still works."
   :type 'boolean
   :group 'eca)
 
@@ -351,6 +370,16 @@ typing or streaming."
 When non-nil, preserve the historical prompt rendering behavior.
 When nil, prompt edits skip Markdown block scans over chat history.
 Set this to nil if typing in large ECA chat buffers is slow."
+  :type 'boolean
+  :group 'eca)
+
+(defcustom eca-chat-enable-markdown-formatting t
+  "Whether ECA chat applies Markdown formatting to its content.
+When nil, chat buffers are rendered as plain text: font-lock (and
+with it all gfm/markdown matchers) is disabled in chat buffers,
+and markdown table alignment and beautification are skipped.
+Streaming, widgets and the prompt keep working.  Debug switch for
+scrolling-sluggishness investigations."
   :type 'boolean
   :group 'eca)
 
@@ -852,6 +881,9 @@ once by `eca-chat-cleared'.")
   "Repeating timer that updates elapsed-time display for running tool calls.")
 
 (defvar-local eca-chat--table-resize-timer nil)
+
+(defvar-local eca-chat--table-last-widths nil
+  "Sorted chat-window widths seen at the last table re-flow check.")
 (defvar-local eca-chat--fontify-timer nil
   "Idle timer that defers `font-lock-ensure' during streaming.")
 (defvar-local eca-chat--progress-text "")
@@ -1009,7 +1041,7 @@ and resume link are not left behind under the replayed messages.")
 
 (defun eca-chat--get-last-buffer (session)
   "Get the eca chat buffer for SESSION."
-  (or (when-let (last-buff (eca--session-last-chat-buffer session))
+  (or (when-let* ((last-buff (eca--session-last-chat-buffer session)))
         (when (buffer-live-p last-buff)
           last-buff))
       (get-buffer (eca-chat-new-buffer-name session))))
@@ -2064,6 +2096,19 @@ the progress/context/prompt still works.  No-op when
             (put-text-property (point-min) (1+ (point-min))
                                'front-sticky '(read-only))))))))
 
+(defun eca-chat--read-only-before-change (beg _end &rest _ignored)
+  "Refuse interactive edits that touch the chat content area.
+Installed per-buffer when `eca-chat-read-only-buffer' is non-nil.
+BEG END is the region about to change.  Edits that bind
+`inhibit-read-only' (all programmatic streaming and prompt
+management edits) pass through, as do edits entirely inside the
+prompt area; anything else touching chat content errors."
+  (unless inhibit-read-only
+    (let ((prompt-start (or (eca-chat--prompt-area-start-point)
+                            (point-max))))
+      (when (< beg prompt-start)
+        (user-error "Chat content is read-only")))))
+
 (defun eca-chat--viewing-bottom-p (win)
   "Return non-nil when the prompt separator is displayed in WIN.
 That means the user is viewing the bottom of the chat, so it is
@@ -2328,7 +2373,7 @@ Above the prompt field the kill is blocked like other deletions."
 
 (defun eca-chat--prompt-content ()
   "Return the current prompt content."
-  (when-let ((prompt-start (eca-chat--prompt-field-start-point)))
+  (when-let* ((prompt-start (eca-chat--prompt-field-start-point)))
     (save-excursion
       (goto-char prompt-start)
       (string-trim (buffer-substring (point) (point-max))))))
@@ -2346,7 +2391,7 @@ without finalizing it)."
           (pos prompt-start)
           (end (point-max)))
       (while (< pos end)
-        (when-let ((context (get-text-property pos 'eca-chat-context-item)))
+        (when-let* ((context (get-text-property pos 'eca-chat-context-item)))
           (unless (member context contexts)
             (push context contexts)))
         (setq pos (next-single-property-change pos 'eca-chat-context-item nil end)))
@@ -2949,7 +2994,7 @@ non-selected active (loading/approval) tabs."
   "Return tab descriptors for all chats in the current session.
 Each tab is an alist with `name', `buffer', and `selected' entries.
 Tabs are ordered oldest-first so new chats appear on the right."
-  (when-let ((session (ignore-errors (eca-session))))
+  (when-let* ((session (ignore-errors (eca-session))))
     (let* ((current-buf (current-buffer))
            (tabs (-keep
                   (lambda (buf)
@@ -2995,14 +3040,14 @@ chat.  E is the mouse event."
 
 (defun eca-chat--sync-last-buffer ()
   "Update session last-chat-buffer to track the current chat buffer."
-  (when-let ((session (ignore-errors (eca-session))))
+  (when-let* ((session (ignore-errors (eca-session))))
     (unless (eq (eca--session-last-chat-buffer session) (current-buffer))
       (setf (eca--session-last-chat-buffer session) (current-buffer)))))
 
 (defun eca-chat-add-workspace-root ()
   "Prompt for a directory and add it as workspace."
   (interactive)
-  (when-let ((session (eca-session)))
+  (when-let* ((session (eca-session)))
     (let ((folder (read-directory-name "Add workspace: ")))
       (eca--session-add-workspace-folder session folder)
       (force-mode-line-update))))
@@ -3013,7 +3058,7 @@ Refuses when only one folder remains.  In `merged' worktree mode, a
 removed folder sharing its git-common-dir with another session folder
 may be auto-re-added on the next buffer visit."
   (interactive)
-  (when-let ((session (eca-session)))
+  (when-let* ((session (eca-session)))
     (let ((folders (eca--session-workspace-folders session)))
       (cond
        ((null folders)
@@ -3287,42 +3332,56 @@ select the resulting window."
   "Align all markdown tables in the chat content area.
 When FROM is non-nil, scan from that position; otherwise scan from
 the last user message.  Falls back to `point-max' as the end bound
-when the prompt area overlay is missing (see #283)."
-  (eca-table-align (or from eca-chat--last-user-message-pos (point-min))
-                   (or (eca-chat--prompt-area-start-point) (point-max))))
+when the prompt area overlay is missing (see #283).  No-op when
+`eca-chat-enable-markdown-formatting' is nil."
+  (when eca-chat-enable-markdown-formatting
+    (eca-table-align (or from eca-chat--last-user-message-pos (point-min))
+                     (or (eca-chat--prompt-area-start-point) (point-max)))))
 
 (defun eca-chat--beautify-tables (&optional from)
   "Apply visual enhancements to markdown tables in the chat buffer.
 When FROM is non-nil, scan from that position; otherwise scan from
-the last user message.  Respects `eca-chat-table-beautify'.  Falls
-back to `point-max' as the end bound when the prompt area overlay
-is missing (see #283)."
-  (eca-table-beautify (or from eca-chat--last-user-message-pos (point-min))
-                      (or (eca-chat--prompt-area-start-point) (point-max))))
+the last user message.  Respects `eca-chat-table-beautify' and
+`eca-chat-enable-markdown-formatting'.  Falls back to `point-max'
+as the end bound when the prompt area overlay is missing (#283)."
+  (when eca-chat-enable-markdown-formatting
+    (eca-table-beautify (or from eca-chat--last-user-message-pos (point-min))
+                        (or (eca-chat--prompt-area-start-point) (point-max)))))
 
 (defun eca-chat--on-window-size-change (frame)
   "Debounced handler for window resize; re-evaluates table action bars.
-FRAME is the resized frame."
+FRAME is the resized frame.  Table geometry depends only on the
+window width, so height-only resizes (e.g. the minibuffer opening
+for a completion, which happens on every `/model'-style prompt)
+skip the costly full-buffer beautify; only a width change actually
+seen by a chat window schedules the re-scan."
   (dolist (win (window-list frame 'no-mini))
     (let ((buf (window-buffer win)))
       (when (and (buffer-live-p buf)
                  (eq (buffer-local-value 'major-mode buf) 'eca-chat-mode)
                  (buffer-local-value 'eca-chat-table-beautify buf))
         (with-current-buffer buf
-          (when (timerp eca-chat--table-resize-timer)
-            (cancel-timer eca-chat--table-resize-timer))
-          (setq eca-chat--table-resize-timer
-                (run-with-idle-timer
-                 0.3 nil
-                 (lambda (b)
-                   (when (buffer-live-p b)
-                     (with-current-buffer b
-                       (eca-chat--beautify-tables (point-min))
-                       ;; Reset truncation if no table wants it anymore
-                       (unless (eca-table--any-truncated-p)
-                         (setq-local truncate-lines nil)
-                         (setq-local word-wrap t)))))
-                 buf)))))))
+          (let ((widths (sort (mapcar #'window-width
+                                      (get-buffer-window-list buf nil t))
+                              #'<)))
+            ;; Widths unchanged: nothing to re-flow (height-only
+            ;; resizes, e.g. the minibuffer, must not re-scan).
+            (unless (equal widths eca-chat--table-last-widths)
+              (setq-local eca-chat--table-last-widths widths)
+              (when (timerp eca-chat--table-resize-timer)
+                (cancel-timer eca-chat--table-resize-timer))
+              (setq eca-chat--table-resize-timer
+                    (run-with-idle-timer
+                     0.3 nil
+                     (lambda (b)
+                       (when (buffer-live-p b)
+                         (with-current-buffer b
+                           (eca-chat--beautify-tables (point-min))
+                           ;; Reset truncation if no table wants it anymore
+                           (unless (eca-table--any-truncated-p)
+                             (setq-local truncate-lines nil)
+                             (setq-local word-wrap t)))))
+                     buf)))))))))
 
 (defun eca-chat--fontify-region (beg end &optional loudly)
   "Custom `font-lock-fontify-region-function' for chat buffers.
@@ -3597,7 +3656,7 @@ values from their own buffer, so switching to
 `eca-chat--get-last-buffer' would apply them to the wrong
 buffer when multiple sessions exist."
   (let ((get-fn (if first? #'-first #'-last)))
-    (when-let ((ov (funcall get-fn (-lambda (ov) (overlay-get ov ov-key))
+    (when-let* ((ov (funcall get-fn (-lambda (ov) (overlay-get ov ov-key))
                             (overlays-in range-min range-max))))
       (goto-char (overlay-start ov)))))
 
@@ -3730,6 +3789,16 @@ CHILD, NAME, DOCSTRING and BODY are passed down."
   ;; every chunk (see #234).  When configured, also skip prompt-area
   ;; Markdown block scans during typing.
   (eca-chat--install-fontification-overrides)
+
+  ;; Debug/escape hatch: render chat content as plain text by
+  ;; turning off font-lock (kills all gfm/markdown matcher cost,
+  ;; including jit-lock work while scrolling).
+  (unless eca-chat-enable-markdown-formatting
+    (font-lock-mode -1))
+
+  (when eca-chat-read-only-buffer
+    (add-hook 'before-change-functions
+              #'eca-chat--read-only-before-change nil t))
 
   (make-local-variable 'completion-at-point-functions)
   (setq-local completion-at-point-functions (list #'eca-chat-completion-at-point))
@@ -4467,7 +4536,7 @@ Must be called with `eca-chat--with-current-buffer' or equivalent."
       ("reasonFinished"
        (let* ((id (plist-get content :id))
               (base (propertize "Thought" 'font-lock-face 'eca-chat-reason-label-face))
-              (time (when-let ((ms (plist-get content :totalTimeMs)))
+              (time (when-let* ((ms (plist-get content :totalTimeMs)))
                       (concat " " (eca-chat--time->presentable-time ms))))
               (label (concat base time)))
          (eca-chat--update-expandable-content id label "" t parent-tool-call-id)))
@@ -4667,7 +4736,7 @@ Must be called with `eca-chat--with-current-buffer' or equivalent."
                                  (mapconcat (lambda (o) (or (plist-get o :text) "")) outputs "\n")
                                ""))
                 (details (plist-get content :details))
-                (time (when-let ((ms (plist-get content :totalTimeMs)))
+                (time (when-let* ((ms (plist-get content :totalTimeMs)))
                         (concat " " (eca-chat--time->presentable-time ms))))
                 (bg? (plist-get details :background))
                 (status (cond
@@ -5127,7 +5196,12 @@ CHAT-ID:
           (eca-chat--apply-per-chat-config chat-config chat-buffer))
       (seq-doseq (chat-buffer (eca-vals (eca--session-chats session)))
         (when (buffer-live-p chat-buffer)
-          (eca-chat--apply-per-chat-config chat-config chat-buffer))))))
+          (eca-chat--apply-per-chat-config chat-config chat-buffer))))
+    ;; Config updates change exactly what the server-info / workspace-info
+    ;; buffers display (model, agent, variant, defaults); notify so they
+    ;; refresh, including the initial `config/updated' after `initialize'
+    ;; that first fills the models/agents lists.
+    (eca-chat--notify-status-changed session)))
 
 (defun eca-chat--initialize-selection-state (session)
   "Initialize the current chat's selection state from SESSION."
@@ -5856,7 +5930,7 @@ Just open if FORCE-OPEN? is non-nil."
   (eca-chat--with-current-buffer (eca-chat--get-last-buffer (eca-session))
     (unless (eca-chat--expandable-content-at-point-dwim)
       (eca-chat-go-to-prev-expandable-block))
-    (when-let ((ov (eca-chat--expandable-content-at-point-dwim)))
+    (when-let* ((ov (eca-chat--expandable-content-at-point-dwim)))
       (eca-chat--expandable-content-toggle (overlay-get ov 'eca-chat--expandable-content-id) (when force-open? t) (not force-open?)))))
 
 ;;;###autoload
@@ -5942,7 +6016,7 @@ window, leaving point where it was."
   (let* ((contexts (eca-chat--get-contexts-dwim)))
     (eca-chat--with-current-buffer (eca-chat--get-last-buffer (eca-session))
       (seq-doseq (context contexts)
-        (when-let ((path (plist-get context :path)))
+        (when-let* ((path (plist-get context :path)))
           (eca-chat--insert-prompt (concat (eca-chat--filepath->str path (plist-get context :linesRange))
                                            " "))))
       (unless arg
@@ -6006,7 +6080,7 @@ if ARG is current prefix, ask for file, otherwise drop current file."
     (eca-assert-session-running session)
     (let ((buffer (eca-chat--get-last-buffer session)))
       (if (buffer-live-p buffer)
-          (if-let ((win (get-buffer-window buffer)))
+          (if-let* ((win (get-buffer-window buffer)))
               ;; If visible, hide it
               (quit-window nil win)
             ;; If not visible, display it according to user settings
@@ -6061,7 +6135,7 @@ title, and elapsed time annotation."
                                   display))))
                           (eca-vals (eca--session-chats session))))
                   (list eca-chat-new-chat-label))))
-      (when-let (chosen (completing-read
+      (when-let* ((chosen (completing-read
                          "Select the chat: "
                          (lambda (string pred action)
                            (if (eq action 'metadata)
@@ -6071,8 +6145,8 @@ title, and elapsed time annotation."
                                   . ,(lambda (candidate)
                                        (gethash candidate annotation-by-label))))
                              (complete-with-action action items string pred)))
-                         nil t))
-        (if-let (buffer (gethash chosen buf-by-label))
+                         nil t)))
+        (if-let* ((buffer (gethash chosen buf-by-label)))
             (progn
               (setf (eca--session-last-chat-buffer session) buffer)
               (eca-chat-open session))
@@ -6427,11 +6501,11 @@ Returns a list of plists ordered newest to oldest."
 (defun eca-chat--select-message-from-completion (prompt)
   "Show completion with user messages using PROMPT.
 Resteps selected message plist or nil if no messages or cancelled."
-  (when-let ((messages (eca-chat--get-user-messages)))
+  (when-let* ((messages (eca-chat--get-user-messages)))
     (let ((table (make-hash-table :test 'equal)))
       (dolist (msg (reverse messages))
         (puthash (eca-chat--format-message-for-completion msg) msg table))
-      (when-let ((choice (completing-read
+      (when-let* ((choice (completing-read
                           prompt
                           (lambda (string pred action)
                             (if (eq action 'metadata)
@@ -6473,7 +6547,7 @@ Resteps selected message plist or nil if no messages or cancelled."
   "Clear the prompt input field in chat.
 Rebuilds the prompt block markup when it is corrupted (see #305)."
   (interactive)
-  (when-let ((chat-buffer (eca-chat--get-last-buffer (eca-session))))
+  (when-let* ((chat-buffer (eca-chat--get-last-buffer (eca-session))))
     (with-current-buffer chat-buffer
       (if (eca-chat--prompt-block-broken-p)
           (eca-chat--rebuild-prompt-area)
@@ -6782,7 +6856,7 @@ markdown-link  %s\n"
 Auto-finds the chat buffer via `eca-chat--doctor-find-buffer'.  When
 no chat buffer is available, returns a single-line notice instead.
 Used by `eca-doctor'."
-  (if-let ((src-buf (eca-chat--doctor-find-buffer)))
+  (if-let* ((src-buf (eca-chat--doctor-find-buffer)))
       (eca-chat--doctor-format src-buf)
     "No chat buffer found in any running session.\n"))
 
