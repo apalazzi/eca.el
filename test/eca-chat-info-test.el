@@ -51,7 +51,8 @@
         (expect (buffer-string) :to-match "Model: model-a")
         (expect (buffer-string) :to-match "Agent: agent-a")
         (expect (buffer-string) :to-match "Variant: low")
-        (expect (buffer-string) :to-match "Server: 1\.2\.3")))
+        (expect (buffer-string) :not :to-match "Server:")
+        (expect (buffer-string) :not :to-match "Trust")))
 
     (it "re-renders on refresh picking up new values"
       (with-current-buffer info-buffer
@@ -94,7 +95,10 @@
       (setq info-buffer (generate-new-buffer " *wsinfo-test-ws*"))
       (let ((session (make-eca--session
                       :id "wsinfo-session"
-                      :workspace-folders '("/ws/alpha" "/ws/beta"))))
+                      :workspace-folders '("/ws/alpha" "/ws/beta")
+                      :tool-servers
+                      `(("office" . ,(list :name "office" :status "running"))
+                        ("redmine" . ,(list :name "redmine" :status "running"))))))
         (spy-on 'eca-session :and-return-value session))
       (with-current-buffer chat-buffer
         (setq-local eca-chat--session-tokens 12000)
@@ -118,9 +122,10 @@
           (expect text :to-match "/ws/beta")
           ;; used / max on the Context row
           (expect text :to-match "12K / 200K")
-          ;; attached references
-          (expect text :to-match "Refs")
-          (expect text :to-match "foo\\.el")
+          ;; attached references on one line, no count
+          (expect text :to-match "Refs: @foo\\.el")
+          ;; MCP servers listed by name
+          (expect text :to-match "MCPs: office, redmine")
           ;; add/remove workspace actions
           (expect text :to-match "add workspace")
           (expect text :to-match "remove workspace"))))

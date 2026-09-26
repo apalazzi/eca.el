@@ -127,9 +127,7 @@ change), the ECA server version, and the trust indicator.
     (with-current-buffer chat
       (let ((model (eca-chat--model))
             (agent (eca-chat--agent))
-            (variant (eca-chat--variant))
-            (version eca-chat--server-version)
-            (trust (eca-chat--trust)))
+            (variant (eca-chat--variant)))
         ;; Info buffers are read-only between renders; every
         ;; erase/insert must inhibit that or it signals
         ;; "Buffer is read-only", which (when called from a
@@ -141,25 +139,7 @@ change), the ECA server version, and the trust indicator.
             (insert
              (eca-chat--info-row "Model" model model-keymap) "\n"
              (eca-chat--info-row "Agent" agent agent-keymap) "\n"
-             (eca-chat--info-row "Variant" variant variant-keymap) "\n"
-             (eca-chat--info-row "Server" version) "\n"
-             (let* ((graphic? (display-graphic-p))
-                    (face (if trust
-                              'eca-chat-trust-on-face
-                            'eca-chat-trust-off-face))
-                    (symbol (if trust
-                                (if graphic? eca-chat-trust-on-symbol
-                                  eca-chat-trust-on-symbol-tty)
-                              (if graphic? eca-chat-trust-off-symbol
-                                eca-chat-trust-off-symbol-tty))))
-               (concat
-                (propertize "Trust"
-                            'font-lock-face 'eca-chat-option-key-face)
-                ": "
-                (propertize symbol 'face face)
-                (propertize (if trust " (on)" " (off)")
-                            'face face)))
-             "\n")
+             (eca-chat--info-row "Variant" variant variant-keymap) "\n")
             (eca-chat-info--overlay-clickable-rows
              (list (cons "Model" #'eca-chat-select-model)
                    (cons "Agent" #'eca-chat-select-agent)
@@ -280,20 +260,24 @@ an overlay keymap in the render, see
             (when bar
               (insert "\n" bar))
             (insert "\n")
-            ;; Attached references (@file, @cursor, ... in the chat)
+            ;; Attached references (@file, @cursor, ... in the chat),
+            ;; all on one line without a count.
             (insert
              (eca-chat--info-row
               "Refs"
               (and context-strs
-                   (number-to-string (length context-strs)))))
-            (dolist (ref context-strs)
-              (insert "\n  " ref))
+                   (mapconcat #'identity context-strs " "))))
             (insert "\n")
-            ;; MCP servers
-            (if mcps
-                (let ((summary (eca-chat--mcps-summary session)))
-                  (insert (eca-chat--info-row "MCPs" summary) "\n"))
-              (insert (eca-chat--info-row "MCPs" "none") "\n"))
+            ;; MCP servers, listed by name.
+            (let ((names (delq nil
+                               (mapcar (lambda (s) (plist-get s :name))
+                                       (append mcps nil)))))
+              (insert (eca-chat--info-row
+                       "MCPs"
+                       (if names
+                           (mapconcat #'identity names ", ")
+                         "none"))
+                      "\n"))
             ;; Skills footprint
             (insert (eca-chat--info-row
                      "Skills tokens"
