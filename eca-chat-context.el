@@ -353,7 +353,11 @@ If STATIC? return strs with no dynamic values."
     (seq-doseq (context eca-chat--context)
       (eca-chat--insert (eca-chat--context->str context))
       (eca-chat--insert " "))
-    (eca-chat--insert (propertize eca-chat-context-prefix 'font-lock-face 'eca-chat-context-unlinked-face))))
+    (eca-chat--insert (propertize eca-chat-context-prefix 'font-lock-face 'eca-chat-context-unlinked-face)))
+  ;; Keep the workspace-info window's Refs section in sync.
+  (when (fboundp 'eca-chat-info--refresh)
+    (ignore-errors
+      (eca-chat-info--refresh (ignore-errors (eca-session))))))
 
 (defun eca-chat--add-context (context)
   "Add to chat CONTEXT."

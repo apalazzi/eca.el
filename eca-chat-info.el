@@ -20,6 +20,7 @@
 
 (require 'eca-util)
 (require 'eca-chat)
+(require 'eca-chat-context)
 
 ;; Variables
 
@@ -208,24 +209,37 @@ MCP server status, and the skills token footprint.
   (setq buffer-read-only t)
   (read-only-mode 1))
 
+(defun eca-chat-info--action-row (label command)
+  "Return a clickable action row showing LABEL.
+COMMAND (interactive) runs on mouse-1; the row is also covered by
+an overlay keymap in the render, see
+`eca-chat-info--overlay-clickable-rows'."
+  (propertize (concat label)
+              'font-lock-face 'eca-chat-option-value-face
+              'pointer 'hand
+              'keymap (eca-chat-info--row-map command)))
+
 (defun eca-chat--render-workspace-info ()
   "Rebuild the workspace-info buffer from the target chat state."
   (unless (buffer-live-p eca-chat-info--chat-buffer)
     (user-error "Target chat buffer no longer exists"))
   (let* ((info-buffer (current-buffer))
-         (chat eca-chat-info--chat-buffer)
-         (session (with-current-buffer chat (eca-session))))
+         (chat eca-chat-info--chat-buffer))
     (with-current-buffer chat
-      (let* ((folders (eca--session-workspace-folders session))
-            (tokens eca-chat--session-tokens)
-            (limit eca-chat--session-limit-context)
-            (bar (eca-chat--context-bar))
-            (breakdown eca-chat--context-breakdown)
-            (mcps (eca-mcp-servers session))
-            (skills-tokens
-             (when breakdown
-               (plist-get (plist-get breakdown :categories)
-                          "Skills"))))
+      (let* ((session (eca-session))
+             (folders (eca--session-workspace-folders session))
+             (tokens eca-chat--session-tokens)
+             (limit eca-chat--session-limit-context)
+             (bar (eca-chat--context-bar))
+             (breakdown eca-chat--context-breakdown)
+             (mcps (eca-mcp-servers session))
+             (skills-tokens
+              (when breakdown
+                (plist-get (plist-get breakdown :categories)
+                           "Skills")))
+             (context-strs
+              (mapcar (lambda (c) (eca-chat--context->str c t))
+                      (append eca-chat--context nil))))
         ;; Same inhibit as the server-info render: the buffer is
         ;; read-only between renders.
         (with-current-buffer info-buffer
@@ -234,17 +248,46 @@ MCP server status, and the skills token footprint.
             ;; Workspace paths
             (dolist (dir folders)
               (insert (eca-chat--info-row "Workspace" dir) "\n"))
+            (insert (eca-chat-info--action-row "[+] add workspace"
+                                               (lambda ()
+                                                 (interactive)
+                                                 (call-interactively
+                                                  #'eca-chat-add-workspace-root)
+                                                 (when (derived-mode-p
+                                                        'eca-chat-workspace-info-mode)
+                                                   (eca-chat--render-workspace-info)))))
+            (insert "\n")
+            (insert (eca-chat-info--action-row "[-] remove workspace"
+                                               (lambda ()
+                                                 (interactive)
+                                                 (call-interactively
+                                                  #'eca-chat-remove-workspace-root)
+                                                 (when (derived-mode-p
+                                                        'eca-chat-workspace-info-mode)
+                                                   (eca-chat--render-workspace-info)))))
+            (insert "\n")
             ;; Context usage (used / available tokens)
             (insert (eca-chat--info-row
                      "Context"
-                     (when (and tokens limit)
-                       (format "%s / %s"
-                               (eca-chat--number->friendly-number
-                                tokens)
-                               (eca-chat--number->friendly-number
-                                limit)))))
+                     (let ((nf #'eca-chat--number->friendly-number))
+                       (cond
+                        ((and tokens limit)
+                         (format "%s / %s"
+                                 (funcall nf tokens)
+                                 (funcall nf limit)))
+                        (tokens (funcall nf tokens))
+                        (t nil)))))
             (when bar
               (insert "\n" bar))
+            (insert "\n")
+            ;; Attached references (@file, @cursor, ... in the chat)
+            (insert
+             (eca-chat--info-row
+              "Refs"
+              (and context-strs
+                   (number-to-string (length context-strs)))))
+            (dolist (ref context-strs)
+              (insert "\n  " ref))
             (insert "\n")
             ;; MCP servers
             (if mcps
@@ -257,6 +300,20 @@ MCP server status, and the skills token footprint.
                      (when skills-tokens
                        (eca-chat--number->friendly-number
                         skills-tokens))))
+            (eca-chat-info--overlay-clickable-rows
+             (list
+              (cons "[+] add workspace"
+                    (lambda ()
+                      (interactive)
+                      (call-interactively #'eca-chat-add-workspace-root)
+                      (when (derived-mode-p 'eca-chat-workspace-info-mode)
+                        (eca-chat--render-workspace-info))))
+              (cons "[-] remove workspace"
+                    (lambda ()
+                      (interactive)
+                      (call-interactively #'eca-chat-remove-workspace-root)
+                      (when (derived-mode-p 'eca-chat-workspace-info-mode)
+                        (eca-chat--render-workspace-info))))))
             (goto-char (point-min))))))))
 
 (defun eca-chat-workspace-info-buffer ()

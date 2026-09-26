@@ -87,4 +87,60 @@
                          maps)
                         :to-be-truthy)))))))))
 
+(describe "eca-chat--render-workspace-info"
+  (let (chat-buffer info-buffer)
+    (before-each
+      (setq chat-buffer (generate-new-buffer " *wsinfo-test-chat*"))
+      (setq info-buffer (generate-new-buffer " *wsinfo-test-ws*"))
+      (let ((session (make-eca--session
+                      :id "wsinfo-session"
+                      :workspace-folders '("/ws/alpha" "/ws/beta"))))
+        (spy-on 'eca-session :and-return-value session))
+      (with-current-buffer chat-buffer
+        (setq-local eca-chat--session-tokens 12000)
+        (setq-local eca-chat--session-limit-context 200000)
+        (setq-local eca-chat--context
+                    (list (list :type "file" :path "/ws/alpha/src/foo.el"))))
+      (with-current-buffer info-buffer
+        (eca-chat-workspace-info-mode)
+        (setq-local eca-chat-info--chat-buffer chat-buffer)))
+    (after-each
+      (let ((inhibit-read-only t))
+        (with-current-buffer info-buffer (erase-buffer)))
+      (kill-buffer info-buffer)
+      (kill-buffer chat-buffer))
+
+    (it "renders workspaces, context used/max, refs and actions"
+      (with-current-buffer info-buffer
+        (eca-chat--render-workspace-info)
+        (let ((text (buffer-string)))
+          (expect text :to-match "/ws/alpha")
+          (expect text :to-match "/ws/beta")
+          ;; used / max on the Context row
+          (expect text :to-match "12K / 200K")
+          ;; attached references
+          (expect text :to-match "Refs")
+          (expect text :to-match "foo\\.el")
+          ;; add/remove workspace actions
+          (expect text :to-match "add workspace")
+          (expect text :to-match "remove workspace"))))
+
+    (it "makes the workspace action rows clickable via overlays"
+      (with-current-buffer info-buffer
+        (eca-chat--render-workspace-info)
+        (dolist (label '("[+] add workspace" "[-] remove workspace"))
+          (save-excursion
+            (goto-char (point-min))
+            (search-forward label)
+            (let* ((bol (line-beginning-position))
+                   (ovs (overlays-in bol (line-end-position)))
+                   (maps (append (mapcar (lambda (o) (overlay-get o 'keymap))
+                                         ovs)
+                                 nil)))
+              (expect (seq-some
+                       (lambda (map)
+                         (and map (lookup-key map [down-mouse-1])))
+                       maps)
+                      :to-be-truthy))))))))
+
 ;;; eca-chat-info-test.el ends here

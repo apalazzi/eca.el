@@ -164,7 +164,13 @@ The chat window takes the space of the old side window."
           ;; Suppress header-line and mode-line on chat buffer.
           (eca-chat--with-current-buffer chat-buffer
             (setq-local header-line-format nil)
-            (setq-local mode-line-format nil))
+            (setq-local mode-line-format nil)
+            ;; The prompt window owns input now: hide the chat
+            ;; buffer's own prompt zone and lock the buffer.
+            (setq-local eca-chat--hide-prompt-zone-p t)
+            (add-hook 'after-change-functions
+                      #'eca-chat--hide-prompt-zone nil t)
+            (eca-chat--hide-prompt-zone))
           ;; Focus the prompt window (user input).
           (select-window prompt-win))))
 
@@ -177,6 +183,12 @@ The chat window takes the space of the old side window."
       (ignore-errors
         (set-window-configuration eca-chat--layout-saved-cwc))
       (setq-local eca-chat--layout-saved-cwc nil)
+      ;; Restore the chat buffer's own prompt zone.
+      (remove-hook 'after-change-functions #'eca-chat--hide-prompt-zone t)
+      (setq-local eca-chat--hide-prompt-zone-p nil)
+      (remove-from-invisibility-spec 'eca-chat-prompt-zone)
+      (let ((inhibit-modification-hooks t))
+        (remove-text-properties (point-min) (point-max) '(invisible nil)))
       ;; Re-enable header-line and mode-line.
       (when eca-chat-override-mode-line
         (setq-local mode-line-format

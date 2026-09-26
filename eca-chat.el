@@ -2099,15 +2099,39 @@ the progress/context/prompt still works.  No-op when
 (defun eca-chat--read-only-before-change (beg _end &rest _ignored)
   "Refuse interactive edits that touch the chat content area.
 Installed per-buffer when `eca-chat-read-only-buffer' is non-nil.
-BEG END is the region about to change.  Edits that bind
+BEG is the start of the region about to change.  Edits that bind
 `inhibit-read-only' (all programmatic streaming and prompt
 management edits) pass through, as do edits entirely inside the
-prompt area; anything else touching chat content errors."
+prompt area; anything else touching chat content errors.  When
+the four-zone layout owns input
+(`eca-chat--hide-prompt-zone-p'), the in-buffer prompt zone is
+hidden and the whole chat buffer is protected."
   (unless inhibit-read-only
-    (let ((prompt-start (or (eca-chat--prompt-area-start-point)
+    (let ((prompt-start (or (and (not (and (boundp 'eca-chat--hide-prompt-zone-p)
+                                           eca-chat--hide-prompt-zone-p))
+                                 (eca-chat--prompt-area-start-point))
                             (point-max))))
       (when (< beg prompt-start)
         (user-error "Chat content is read-only")))))
+
+(defvar-local eca-chat--hide-prompt-zone-p nil
+  "Non-nil when the four-zone layout owns prompt input.
+Set by `eca-chat--layout-setup'; the chat buffer's prompt zone
+(separator, task area, context line and prompt field) is then
+kept invisible and the whole buffer is read-only to interactive
+edits.")
+
+(defun eca-chat--hide-prompt-zone (&rest _ignored)
+  "Make the in-buffer prompt zone invisible.
+Used while `eca-chat--hide-prompt-zone-p' is set: the chat window
+shows pure content only.  Re-applied from `after-change-functions'
+because the transient area, context and progress updates keep
+rewriting that zone."
+  (when-let* ((start (eca-chat--prompt-area-start-point)))
+    (let ((inhibit-modification-hooks t))
+      (add-to-invisibility-spec 'eca-chat-prompt-zone)
+      (put-text-property start (point-max) 'invisible
+                         'eca-chat-prompt-zone))))
 
 (defun eca-chat--viewing-bottom-p (win)
   "Return non-nil when the prompt separator is displayed in WIN.
