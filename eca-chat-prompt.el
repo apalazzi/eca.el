@@ -22,6 +22,9 @@
 (require 'eca-util)
 (require 'eca-chat)
 
+;; Forward declarations for eca-chat.el
+(defvar eca-chat-input-map)
+
 ;; Variables
 
 (defvar-local eca-chat-prompt--target-buffer nil
@@ -92,6 +95,13 @@ mention pointing at a temporary screenshot file.
                         #'eca-chat-prompt--yank-image-handler)
     (yank-media-handler "image/webp"
                         #'eca-chat-prompt--yank-image-handler)))
+
+;; Inherit every ECA command keybinding from the input map so the input
+;; window exposes the full command set.  The chat window uses
+;; `eca-chat-mode-map' (markdown only); only the input surface gets the
+;; ECA commands.  The local bindings below (send/cancel/TAB/yank) stay
+;; on top of the inherited ones.
+(set-keymap-parent eca-chat-prompt-mode-map eca-chat-input-map)
 
 (define-key eca-chat-prompt-mode-map (kbd "C-c C-c") #'eca-chat-prompt-send)
 (define-key eca-chat-prompt-mode-map (kbd "C-c C-k") #'eca-chat-prompt-cancel)

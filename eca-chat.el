@@ -962,6 +962,9 @@ A plist with :session :request :question :options :tool-call-id :allow-freeform.
 (defvar-local eca-chat--context-area-ov-cache nil)
 (defvar-local eca-chat--task-area-ov-cache nil)
 (defvar-local eca-chat--question-block-ov-cache nil)
+(defvar-local eca-chat--input-region-keyed-p nil)
+;; Forward declaration (full `defvar-local' + docstring lives lower).
+(defvar eca-chat--hide-prompt-zone-p)
 
 
 (defvar eca-chat--new-chat-id 0)
@@ -985,6 +988,16 @@ and resume link are not left behind under the replayed messages.")
 (defvar eca-chat-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map markdown-mode-map)
+    map)
+  "Keymap for the ECA chat window.
+Inherits the markdown mode so the chat window keeps only the normal
+keybindings of its content mode.  All ECA command keybindings live in
+`eca-chat-input-map', which is active only on the input surface (the
+in-buffer prompt area and the `eca-chat-prompt-mode' window).")
+
+(defvar eca-chat-input-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map eca-chat-mode-map)
     (define-key map (kbd "S-<return>") #'eca-chat--key-pressed-newline)
     (define-key map (kbd "C-<return>") #'eca-chat--key-pressed-queue)
     (define-key map (kbd "C-<up>") #'eca-chat--key-pressed-previous-prompt-history)
@@ -1037,7 +1050,12 @@ and resume link are not left behind under the replayed messages.")
     (define-key map (kbd "C-c C-z 0") #'eca-chat-image-zoom-reset)
     (define-key map (kbd "C-c C-z s") #'eca-chat-save-image-at-point)
     map)
-  "Keymap used by `eca-chat-mode'.")
+  "Keymap for ECA input surfaces (in-buffer prompt area and the
+`eca-chat-prompt-mode' window).
+Parent is `eca-chat-mode-map', so it inherits the markdown bindings
+and adds every ECA command keybinding.  The chat window itself uses
+`eca-chat-mode-map' (markdown only), so these commands are reachable
+only from the input surface.")
 
 (defun eca-chat--get-last-buffer (session)
   "Get the eca chat buffer for SESSION."
@@ -1623,7 +1641,7 @@ show which commands an approve & remember would remember, hiding the
 remember action when nothing can be remembered."
   (let* ((keybinding-for (lambda (command)
                            (concat "("
-                                   (key-description (car (where-is-internal command eca-chat-mode-map)))
+                                   (key-description (car (where-is-internal command eca-chat-input-map)))
                                    ")")))
          (effective-chat-id (or chat-id eca-chat--id))
          (shell-command? (string= "shellCommand" (plist-get details :type)))
@@ -1995,7 +2013,8 @@ Should be called whenever overlays are wholesale removed, e.g. via
         eca-chat--progress-area-ov-cache nil
         eca-chat--context-area-ov-cache nil
         eca-chat--task-area-ov-cache nil
-        eca-chat--question-block-ov-cache nil))
+        eca-chat--question-block-ov-cache nil
+        eca-chat--input-region-keyed-p nil))
 
 (defun eca-chat--prompt-field-ov ()
   "Return the overlay for the prompt field."
@@ -2030,6 +2049,30 @@ Should be called whenever overlays are wholesale removed, e.g. via
   "Return the metadata overlay for the prompt area start point."
   (-some-> (eca-chat--prompt-area-ov)
     (overlay-start)))
+
+(defun eca-chat--sync-input-region-keymap (&rest _ignore)
+  "Tag the in-buffer prompt area with `eca-chat-input-map'.
+Sets the `keymap' text property over [prompt-area-start, point-max]
+so key lookup in the prompt area (context line + prompt field)
+resolves against the full ECA input map, while the chat history above
+it uses `eca-chat-mode-map' (markdown only).  A text property (rather
+than an overlay property) is used because the former is honored at
+`point-max' — the position where prompt typing usually lands — while
+an overlay `keymap' is not.  No-op in the four-window layout, where a
+dedicated prompt window owns input; it strips the property there."
+  (if (and (derived-mode-p 'eca-chat-mode)
+           (not eca-chat--hide-prompt-zone-p)
+           (eca-chat--prompt-area-start-point))
+      (let ((start (eca-chat--prompt-area-start-point)))
+        (when (< start (point-max))
+          (let ((inhibit-read-only t))
+            (put-text-property start (point-max) 'keymap eca-chat-input-map))
+          (setq eca-chat--input-region-keyed-p t)))
+    (when eca-chat--input-region-keyed-p
+      (let ((inhibit-read-only t))
+        (remove-text-properties (point-min) (point-max)
+                                '(keymap eca-chat-input-map)))
+      (setq eca-chat--input-region-keyed-p nil))))
 
 (defconst eca-chat--task-block-id "eca-chat-task"
   "Fixed expandable block ID for the task area widget.")
@@ -3837,6 +3880,13 @@ CHILD, NAME, DOCSTRING and BODY are passed down."
 
   ;; Turn raw @path/#path tokens into proper items after a space.
   (add-hook 'post-self-insert-hook #'eca-chat--post-self-insert nil t)
+
+  ;; Cover the in-buffer prompt area with the ECA input keymap so the
+  ;; chat window stays markdown-only while the prompt area keeps every
+  ;; ECA command (see `eca-chat-input-map' and
+  ;; `eca-chat--sync-input-region-keymap').
+  (add-hook 'after-change-functions #'eca-chat--sync-input-region-keymap nil t)
+  (eca-chat--sync-input-region-keymap)
 
   (make-local-variable 'company-box-icons-functions)
   (when (featurep 'company-box)
@@ -6632,7 +6682,7 @@ cond ordering inside `eca-chat--key-pressed-return', the first
 expandable label's keymap, and whether the loaded `.elc' is stale
 relative to the on-disk `.el'."
   (let* ((mode-map-ret (ignore-errors
-                         (lookup-key eca-chat-mode-map (kbd "RET"))))
+                         (lookup-key eca-chat-input-map (kbd "RET"))))
          (mode-map-ret-ok (eq mode-map-ret 'eca-chat--key-pressed-return))
          (kpr-body (ignore-errors
                      (prin1-to-string
@@ -6767,9 +6817,9 @@ intentionally a no-op until you answer the question." hints))
       (push "This chat is marked closed (`eca-chat--closed' non-nil); \
 sending will raise a user-error." hints))
     (when (and in-chat-p (not (plist-get self :mode-map-ret-ok)))
-      (push (format "`eca-chat-mode-map' RET is `%s', expected \
-`eca-chat--key-pressed-return'.  Some code has clobbered the mode-map \
-after `eca-chat' was loaded; check your user config."
+      (push (format "`eca-chat-input-map' RET is `%s', expected \
+`eca-chat--key-pressed-return'.  Some code has clobbered the input \
+map after `eca-chat' was loaded; check your user config."
                     (plist-get self :mode-map-ret))
             hints))
     (when (and in-chat-p (eq (plist-get self :cond-ok) nil))
@@ -6828,7 +6878,7 @@ Emacs." (plist-get self :source-file) (plist-get self :loaded-file))
                           (eca--session-workspace-folders session)))
         (insert "NIL — buffer is not registered to a workspace\n\n"))
       (insert "### Self-check\n\n")
-      (insert (format "- `eca-chat-mode-map' RET → %s  %s\n"
+      (insert (format "- `eca-chat-input-map' RET → %s  %s\n"
                       (or (plist-get self :mode-map-ret) "<unbound>")
                       (if (plist-get self :mode-map-ret-ok) "✓" "✗")))
       (insert (format
